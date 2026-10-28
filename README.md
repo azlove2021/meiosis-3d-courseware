@@ -2,6 +2,9 @@
 
 高中生物必修2《遗传与进化》2.1 减数分裂的交互式 3D 课件（three.js，离线单页）。
 
+- 🌐 在线预览（GitHub Pages）：<https://azlove2021.github.io/meiosis-3d-courseware/>
+- 📦 仓库地址：<https://github.com/azlove2021/meiosis-3d-courseware>
+
 ## 打开方式
 
 双击 `S-01_减数分裂.html` 即可，无需服务器、无需构建。
