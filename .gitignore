@@ -1,0 +1,5 @@
+# 备份与临时文件不入库
+_backup/
+*.tmp
+.DS_Store
+Thumbs.db
