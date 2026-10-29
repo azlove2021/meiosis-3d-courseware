@@ -4,6 +4,11 @@
   "voiceMode": "required",
   "quantityChart": "required",
   "interactionLevel": "standard",
+  "interaction3d": "orbit",
+  "panelHide": "none",
+  "exemptions": {
+    "panelHide": "S-01 为 v1.1 legacy 六块面板版式，未实现折叠；后续按 v1.3 标准重做时补 左栏/右栏/影院 三档。"
+  },
   "offlineRequired": true,
   "params": ["t", "voice", "simple", "xo", "arr"],
   "publishMode": "local",
