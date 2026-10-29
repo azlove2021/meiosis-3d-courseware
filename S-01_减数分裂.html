@@ -644,7 +644,7 @@ scene.add(spindle);
 /* ---------- 5. 状态计算 ---------- */
 const V=a=>new THREE.Vector3(a[0],a[1],a[2]);
 const ease=x=>x*x*(3-2*x);
-let showXO=false,t=0,playing=false,speed=0.85,stageIdx=-1,tetVisible=false,arrangement=0,stageDur=5.5;
+let showXO=false,t=0,playing=false,speed=0.85,stageIdx=-1,tetVisible=false,arrangement=0,morphing=false;
 
 function apply(tt){
   const i=Math.min(8,Math.floor(tt)),f=ease(Math.min(1,Math.max(0,tt-i)));
@@ -766,18 +766,19 @@ function apply(tt){
   spGeo.attributes.position.needsUpdate=true;
 
   /* 面板：只在时期切换时更新 DOM */
-  const idx=Math.round(Math.min(9,tt));
-  if(idx!==stageIdx&&!(speaking&&idx>stageIdx)) setStageUI(idx);
+  const idx=Math.round(Math.min(STAGES.length-1,tt));
+  if(!morphing&&idx!==stageIdx) setStageUI(idx);
 }
 
 /* ---------- 6. 面板与曲线 ---------- */
 const $=id=>document.getElementById(id);
 const chart=$('chart'),ctx=chart.getContext('2d');
 const SERIES=[
-  {name:'染色体',color:'#8b5cf6',data:[4,4,4,4,4,2,2,2,4,2]},
-  {name:'DNA',color:'#06b6d4',data:[4,8,8,8,8,4,4,4,4,2]},
-  {name:'染色单体',color:'#f59e0b',data:[0,8,8,8,8,4,4,4,0,0]}
+  {name:'染色体',color:'#8b5cf6',data:STAGES.map(s=>+s.c[0])},
+  {name:'DNA',color:'#06b6d4',data:STAGES.map(s=>+s.c[1])},
+  {name:'染色单体',color:'#f59e0b',data:STAGES.map(s=>+s.c[2])}
 ];
+const Y_MAX=Math.max(1,...SERIES.flatMap(s=>s.data));
 function drawChart(idx){
   const dpr=Math.min(devicePixelRatio,2);
   const w=chart.clientWidth,h=chart.clientHeight;
@@ -787,13 +788,14 @@ function drawChart(idx){
   ctx.clearRect(0,0,w,h);
   const padL=20,padR=8,padT=8,padB=16;
   const x=i=>padL+(w-padL-padR)*(i/(SERIES[0].data.length-1));
-  const y=v=>h-padB-(h-padT-padB)*(v/9);
+  const y=v=>h-padB-(h-padT-padB)*(v/Y_MAX);
+  const yStep=Y_MAX<=8?2:Math.ceil(Y_MAX/4);
   ctx.strokeStyle='#eef2f7';ctx.lineWidth=1;
-  [0,3,6,9].forEach(v=>{
+  for(let v=0;v<=Y_MAX;v+=yStep){
     ctx.beginPath();ctx.moveTo(padL,y(v));ctx.lineTo(w-padR,y(v));ctx.stroke();
     ctx.fillStyle='#a8b3c4';ctx.font='9px sans-serif';ctx.textAlign='right';
     ctx.fillText(String(v),padL-4,y(v)+3);
-  });
+  }
   ctx.strokeStyle='#ddd6fe';ctx.setLineDash([3,3]);
   ctx.beginPath();ctx.moveTo(x(idx),padT);ctx.lineTo(x(idx),h-padB);ctx.stroke();
   ctx.setLineDash([]);
@@ -817,7 +819,7 @@ function drawChart(idx){
   });
 }
 function setStageUI(idx){
-  if(synth) synth.cancel();
+  cancelVoice();
   stageIdx=idx;
   const st=STAGES[idx];
   $('stepNo').textContent=String(idx+1).padStart(2,'0')+' / '+String(STAGES.length).padStart(2,'0');
@@ -845,15 +847,12 @@ function setStageUI(idx){
   cam.rGoal=FRAME[idx];
   drawChart(idx);
   if(autoVoice.checked&&voiceReady&&synth){
-    stageDur=Math.max(3.0,estVoiceDur(st.v)*0.92);
     if(playing){
-      speak(st.v);
+      speakStage(idx);
     }else{
       clearTimeout(speakTimer);
-      speakTimer=setTimeout(()=>{if(!playing)speak(st.v);},420);
+      speakTimer=setTimeout(()=>{if(!playing)speakStage(idx);},420);
     }
-  }else{
-    stageDur=1/(speed*0.22);
   }
 }
 
@@ -925,10 +924,11 @@ function drawLabels(){
   });
 }
 
-/* ---------- 7. 语音 ---------- */
+/* ---------- 7. 语音（五态状态机） ---------- */
 const synth=window.speechSynthesis;
 const autoVoice=$('autoVoice'),rateSel=$('rate'),speakBtn=$('speakBtn');
-let voiceReady=false,zhVoice=null,speaking=false,speakTimer=0,speakToken=0;
+let voiceReady=false,zhVoice=null,speakTimer=0;
+let voiceState='ended',voiceToken=0,voiceStage=-1,fallbackTimer=0;
 function effectiveRate(){
   const base=parseFloat(rateSel.value)||1;
   return Math.min(1.4,Math.max(0.6,base*(speed/0.85)));
@@ -944,60 +944,73 @@ function loadVoices(){
 }
 if(synth){loadVoices();synth.onvoiceschanged=loadVoices;}
 else{$('vhint').textContent='浏览器不支持语音';speakBtn.disabled=true;}
-function speak(text){
-  if(!synth)return;
-  const my=++speakToken;
-  synth.cancel();
-  const u=new SpeechSynthesisUtterance(text);
+function cancelVoice(){
+  voiceToken++;voiceStage=-1;clearTimeout(fallbackTimer);
+  if(synth)synth.cancel();
+  voiceState='cancelled';
+  speakBtn.classList.remove('playing');speakBtn.textContent='▶ 朗读本段';
+}
+function speakStage(idx){
+  if(!synth){voiceState='error';return;}
+  if(idx<0){voiceState='ended';return;}
+  const my=++voiceToken;
+  voiceStage=idx;voiceState='pending';
+  synth.cancel();clearTimeout(fallbackTimer);
+  const u=new SpeechSynthesisUtterance(STAGES[idx].v);
   u.lang='zh-CN';u.rate=effectiveRate();u.pitch=1;
   if(zhVoice)u.voice=zhVoice;
-  u.onstart=()=>{if(my!==speakToken)return;speaking=true;speakBtn.classList.add('playing');speakBtn.textContent='⏸ 朗读中';};
-  u.onend=u.onerror=()=>{if(my!==speakToken)return;speaking=false;speakBtn.classList.remove('playing');speakBtn.textContent='▶ 朗读本段';};
+  u.onstart=()=>{if(my!==voiceToken)return;voiceState='speaking';speakBtn.classList.add('playing');speakBtn.textContent='⏸ 朗读中';};
+  u.onend=()=>{if(my!==voiceToken)return;voiceState='ended';speakBtn.classList.remove('playing');speakBtn.textContent='▶ 朗读本段';};
+  u.onerror=()=>{if(my!==voiceToken)return;voiceState='error';setTimeout(()=>{if(my===voiceToken)voiceState='ended';},800);};
   synth.speak(u);
+  fallbackTimer=setTimeout(()=>{
+    if(my!==voiceToken)return;
+    if(voiceState==='pending'||voiceState==='speaking')voiceState='ended';
+  },(estVoiceDur(STAGES[idx].v)+3)*1000);
 }
 speakBtn.onclick=()=>{
   voiceReady=true;
-  if(speaking){synth.cancel();return;}
-  speak(STAGES[stageIdx].v);
+  if(voiceState==='speaking'||voiceState==='pending'){cancelVoice();return;}
+  speakStage(stageIdx);
 };
-autoVoice.onchange=()=>{if(!autoVoice.checked&&synth)synth.cancel();};
+autoVoice.onchange=()=>{if(!autoVoice.checked)cancelVoice();};
 document.addEventListener('pointerdown',()=>{voiceReady=true;},{once:true});
 $('voiceToggle').onclick=e=>{
   const on=!autoVoice.checked;
   autoVoice.checked=on;
   e.currentTarget.classList.toggle('on',on);
   e.currentTarget.textContent=on?'🔊 语音讲解':'🔇 语音关闭';
-  if(!on&&synth)synth.cancel();
-  else if(on&&voiceReady)speak(STAGES[stageIdx].v);
+  if(!on)cancelVoice();
+  else if(voiceReady)speakStage(stageIdx);
 };
 
 /* ---------- 8. 交互 ---------- */
 const scrub=$('scrub'),playBtn=$('play');
+scrub.max=(STAGES.length-1)*100;
 function setPlay(){playBtn.textContent=playing?'⏸ 暂停':'▶ 播放';}
 scrub.addEventListener('input',()=>{
   t=scrub.value/100;playing=false;setPlay();
-  if(synth)synth.cancel();
+  cancelVoice();
   apply(t);
 });
 $('speed').addEventListener('input',e=>{
   speed=e.target.value/100;
-  if(autoVoice.checked&&voiceReady) stageDur=Math.max(3.0,estVoiceDur(STAGES[stageIdx].v)*0.92);
 });
 playBtn.onclick=()=>{
-  if(t>=9){t=0;stageIdx=-1;apply(0);clearTimeout(speakTimer);}
+  if(t>=STAGES.length-1){t=0;stageIdx=-1;apply(0);clearTimeout(speakTimer);}
   playing=!playing;
   voiceReady=true;
   phase='hold';morphT=0;clearTimeout(speakTimer);
   if(playing){
     if(stageIdx<0) stageIdx=Math.round(t);
-    if(autoVoice.checked&&synth) speak(STAGES[stageIdx].v);
-  }else if(synth){
-    synth.cancel();
+    if(autoVoice.checked&&synth) speakStage(stageIdx);
+  }else{
+    cancelVoice();
   }
   setPlay();
 };
-$('prev').onclick=()=>{t=Math.max(0,Math.round(t)-1);playing=false;setPlay();apply(t);};
-$('next').onclick=()=>{t=Math.min(9,Math.round(t)+1);playing=false;setPlay();apply(t);};
+$('prev').onclick=()=>{t=Math.max(0,Math.round(t)-1);playing=false;setPlay();cancelVoice();apply(t);};
+$('next').onclick=()=>{t=Math.min(STAGES.length-1,Math.round(t)+1);playing=false;setPlay();cancelVoice();apply(t);};
 $('xo').onchange=e=>{showXO=e.target.checked;apply(t);};
 $('reset').onclick=()=>{
   cam.theta=0.34;cam.phi=1.22;cam.rGoal=FRAME[Math.round(t)];cam.tgtGoal.set(0,0,0);
@@ -1098,7 +1111,7 @@ function resize(){
 }
 addEventListener('resize',resize);
 const _q=new URLSearchParams(location.search);
-t=_q.has('t')?Math.min(9,Math.max(0,parseFloat(_q.get('t'))||0)):0;
+t=_q.has('t')?Math.min(STAGES.length-1,Math.max(0,parseFloat(_q.get('t'))||0)):0;
 if(_q.get('xo')==='1'){showXO=true;$('xo').checked=true;}
 if(_q.get('arr')==='1'){arrangement=1;$('arrangeBtn').textContent='排列 B';}
 if(_q.get('panel')==='1')document.body.classList.add('panel-open');
@@ -1112,6 +1125,7 @@ let last=performance.now();
 let phase='hold',morphT=0,morphFrom=0,morphTo=0;
 const easeIO=x=>x<.5?2*x*x:1-Math.pow(-2*x+2,2)/2;
 function enterStage(i){
+  morphing=false;
   if(i!==stageIdx) setStageUI(i);   // 进阶段时设置 UI 并朗读本段
   phase='hold';
 }
@@ -1122,9 +1136,10 @@ function enterStage(i){
     if(voiceMode){
       /* 语音模式：先定格在当前阶段听讲解，讲完再做一段短促形变进入下一阶段 —— 动画完全被语音节奏驱动 */
       if(phase==='hold'){
+        morphing=false;
         t=stageIdx; apply(t);            // 冻结在当前阶段，画面与讲解严格对应
-        if(!speaking){                   // 本段讲解结束 → 开始形变到下一阶段
-          if(stageIdx<9){ phase='morph'; morphFrom=stageIdx; morphTo=stageIdx+1; morphT=0; cam.rGoal=FRAME[morphTo]; }
+        if(voiceState==='ended'&&voiceStage===stageIdx){  // 只有本段语音正常结束才形变
+          if(stageIdx<STAGES.length-1){ phase='morph'; morphing=true; morphFrom=stageIdx; morphTo=stageIdx+1; morphT=0; cam.rGoal=FRAME[morphTo]; }
           else { playing=false; setPlay(); }
         }
       }else{                             // 阶段间形变（时长随语速调节，与讲解节奏一致）
@@ -1137,7 +1152,7 @@ function enterStage(i){
     }else{
       /* 无语音：按速度连续播放 */
       t+=dt*(speed*0.22);
-      if(t>=9){t=9;playing=false;setPlay();}
+      if(t>=STAGES.length-1){t=STAGES.length-1;playing=false;setPlay();}
       apply(t);
     }
   }
