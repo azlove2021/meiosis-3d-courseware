@@ -1,5 +1,6 @@
 {
   "type": "process",
+  "layout": "legacy",
   "voiceMode": "required",
   "quantityChart": "required",
   "interactionLevel": "standard",
